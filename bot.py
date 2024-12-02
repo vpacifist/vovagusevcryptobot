@@ -96,11 +96,6 @@ def get_mode_price():
     return None
 
 
-# Функция для отправки сообщения в Telegram
-async def send_telegram_message(update: Update, message: str):
-    await update.message.reply_text(message)
-
-
 # Основная логика сравнения цен
 async def check_prices_and_notify(update: Update):
     user_id = update.message.chat_id
@@ -117,7 +112,7 @@ async def check_prices_and_notify(update: Update):
             logger.info(f"Цена за 100 BMX: BASE = {base_price:.2f} USD, MODE = {mode_price:.2f} USD, Разница = {percentage_diff:.2f}%")
 
             # Уведомление, если разница >= 10%
-            if percentage_diff >= 10:
+            if percentage_diff >= 8.5:
                 if base_price > mode_price:
                     message = f"Цена за 100 BMX в сети BASE выше на {percentage_diff:.2f}%: {base_price:.2f} USD vs {mode_price:.2f} USD."
                 else:
@@ -157,13 +152,13 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- MODE: {mode_price:.2f} USD\n"
             f"- Разница: {percentage_diff:.2f}%\n"
         )
-        if percentage_diff >= 10:
+        if percentage_diff >= 8.5:
             if base_price > mode_price:
                 message += "Цена BMX в сети BASE выше."
             else:
                 message += "Цена BMX в сети MODE выше."
         else:
-            message += "Разница не превышает 10%."
+            message += "Разница не превышает 8.5%."
     else:
         message = "Не удалось получить цены из одной или обеих сетей."
 
@@ -193,6 +188,11 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Задача для пользователя {user_id} остановлена.")
     else:
         await update.message.reply_text("Бот не запущен для вас.")
+
+
+# Функция для отправки сообщения в Telegram
+async def send_telegram_message(update: Update, message: str):
+    await update.message.reply_text(message)
 
 
 if __name__ == '__main__':
