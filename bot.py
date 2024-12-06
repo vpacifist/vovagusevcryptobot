@@ -179,9 +179,9 @@ async def check_prices_and_notify(update: Update):
 
         logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
-        if bmx_diff_base_to_mode > 1:
+        if bmx_diff_base_to_mode > 2:
             await update.message.reply_text(f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-        if bmx_diff_mode_to_base > 1:
+        if bmx_diff_mode_to_base > 2:
             await update.message.reply_text(f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
 
         current_time = datetime.now()
