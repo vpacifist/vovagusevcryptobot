@@ -167,14 +167,14 @@ async def check_prices_and_notify(update: Update):
 
         if base_price is None or mode_price is None:
             logger.warning("Не удалось получить цены из одной или обеих сетей.")
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
             continue
 
         bmx_diff_base_to_mode, bmx_diff_mode_to_base = calculate_arbitrage(base_price, mode_price)
 
         if bmx_diff_base_to_mode is None or bmx_diff_mode_to_base is None:
             logger.warning("Не удалось рассчитать арбитражные данные.")
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
             continue
 
         logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
@@ -191,7 +191,7 @@ async def check_prices_and_notify(update: Update):
             )
             last_notification_time = current_time
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
