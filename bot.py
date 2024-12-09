@@ -8,20 +8,25 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from datetime import datetime
 
-# Настроим логирование
+
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger()
 
+
 # Токен Telegram-бота
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
     raise ValueError("Переменная окружения TELEGRAM_TOKEN не установлена.")
 
-# Словарь для хранения задач
-user_tasks = {}
+
+active_users = set()  # Список активных пользователей
+price_check_task = None  # Глобальная задача
+last_arbitrage_result = {"base_to_mode": None, "mode_to_base": None}  # Глобальное состояние
+
 
 # Загрузка ABI-файлов и контрактов
 try:
@@ -157,8 +162,8 @@ def calculate_arbitrage(base_price, mode_price):
 
 
 # Функция оповещения об арбитраже
-async def check_prices_and_notify(update: Update):
-    user_id = update.message.chat_id
+async def check_prices_and_notify():
+    global active_users, last_arbitrage_result
     last_notification_time = datetime.now()
 
     while True:
@@ -167,71 +172,94 @@ async def check_prices_and_notify(update: Update):
 
         if base_price is None or mode_price is None:
             logger.warning("Не удалось получить цены из одной или обеих сетей.")
-            await asyncio.sleep(10)
+            await asyncio.sleep(15)
             continue
 
         bmx_diff_base_to_mode, bmx_diff_mode_to_base = calculate_arbitrage(base_price, mode_price)
 
         if bmx_diff_base_to_mode is None or bmx_diff_mode_to_base is None:
             logger.warning("Не удалось рассчитать арбитражные данные.")
-            await asyncio.sleep(10)
+            await asyncio.sleep(15)
             continue
+
+        # Обновляем глобальные данные
+        last_arbitrage_result["base_to_mode"] = bmx_diff_base_to_mode
+        last_arbitrage_result["mode_to_base"] = bmx_diff_mode_to_base
 
         logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
-        if bmx_diff_base_to_mode > 2:
-            await update.message.reply_text(f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-        if bmx_diff_mode_to_base > 2:
-            await update.message.reply_text(f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
+        # Алёрт по условию
+        for user_id in active_users:
+            if bmx_diff_base_to_mode > 1:
+                await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
+            if bmx_diff_mode_to_base > 1:
+                await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
 
+        # Ежечасный алёрт
         current_time = datetime.now()
         if (current_time - last_notification_time).total_seconds() >= 3600:
-            await update.message.reply_text(
-                f"Арбитражное состояние:\nBASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\nMODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
-            )
+            for user_id in active_users:
+                await application.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"Бот в порядке. Ежечасный алёрт:\n"
+                        f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\n"
+                        f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
+                    )
+                )
             last_notification_time = current_time
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(15)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global active_users, price_check_task
+
     user_id = update.message.chat_id
-
-    if user_id in user_tasks:
-        await update.message.reply_text("Бот уже запущен для вас.")
-        logger.info("/start получен, Бот уже запущен")
+    if user_id in active_users:
+        logger.info(f"Старый user_id {user_id} нажал /start и найден в списке активных")
+        await update.message.reply_text("Бот уже запущен.")
     else:
-        await update.message.reply_text("Привет! Я крипто-бот. Буду присылать тебе алерты о возможностях арбитража.")
-        task = asyncio.create_task(check_prices_and_notify(update))
-        user_tasks[user_id] = task
-        logger.info("/start получен, Привет отправлен")
+        logger.info(f"Новый user_id {user_id} нажал /start и добавлен в список активных")
+        active_users.add(user_id)
+        await update.message.reply_text("Привет. Я крипто-бот. Буду отправлять тебе крипто-алёрты.")
 
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    base_price = get_base_price()
-    mode_price = get_mode_price()
+    # Запускаем глобальную задачу, если она ещё не запущена
+    if price_check_task is None or price_check_task.done():
+        logger.info("Глобальная задача проверки цен запущена.")
+        price_check_task = asyncio.create_task(check_prices_and_notify())
 
-    if base_price and mode_price:
-        bmx_diff_base_to_mode, bmx_diff_mode_to_base = calculate_arbitrage(base_price, mode_price)
-        logger.info(f"/price Арбитраж: BASE → MODE = {bmx_diff_base_to_mode:.2f}, MODE → BASE = {bmx_diff_mode_to_base:.2f}")
-
-        # Сообщение пользователю
-        await update.message.reply_text(
-            f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\nMODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
-        )
-    else:
-        await update.message.reply_text("Не удалось получить цены.")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global active_users
+
+    user_id = update.message.chat_id
+    if user_id in active_users:
+        logger.info(f"Старый user_id {user_id} нажал /stop и удалён из списка активных")
+        active_users.remove(user_id)
+        await update.message.reply_text("Ты отписался от алёртов.")
+    else:
+        logger.info(f"Новый user_id {user_id} нажал /stop, он не был в списке активных")
+        await update.message.reply_text("Ты не был подписан на алёрты.")
+
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_arbitrage_result
+
     user_id = update.message.chat_id
 
-    if user_id in user_tasks:
-        user_tasks[user_id].cancel()
-        del user_tasks[user_id]
-        await update.message.reply_text("Бот остановлен. Вы больше не будете получать уведомления.")
-        logger.info(f"/stop получен. Задача для пользователя {user_id} остановлена.")
+    base_to_mode = last_arbitrage_result["base_to_mode"]
+    mode_to_base = last_arbitrage_result["mode_to_base"]
+
+    if base_to_mode is None or mode_to_base is None:
+        logger.warning(f"user_id {user_id} нажал /price, но арбитражные данные недоступны. Либо он ещё не нажимал /start, либо бот поломался")
+        await update.message.reply_text("Актуальные данные недоступны. Попробуй сперва /start, а потом уже /price. Если не поможет — значит, бот поломался :(")
     else:
-        await update.message.reply_text("Бот не запущен для вас.")
-        logger.info("/stop получен. Бот не запущен для вас")
+        logger.info(f"user_id {user_id} нажал /price и получил актуальные данные")
+        await update.message.reply_text(
+            f"BASE → MODE: {base_to_mode:.2f} BMX\n"
+            f"MODE → BASE: {mode_to_base:.2f} BMX"
+        )
 
 
 # Основной блок запуска
