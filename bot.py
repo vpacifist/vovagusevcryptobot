@@ -96,7 +96,8 @@ def get_base_price():
         response = requests.post(
             rpc_url_base,
             headers={"Content-Type": "application/json"},
-            data=json.dumps(quote_request_body)
+            data=json.dumps(quote_request_body),
+            timeout=10
         )
         if response.status_code == 200:
             quote = response.json()
@@ -143,7 +144,8 @@ def calculate_arbitrage(base_price, mode_price):
         response = requests.post(
             rpc_url_base,
             headers={"Content-Type": "application/json"},
-            data=json.dumps(quote_request_body)
+            data=json.dumps(quote_request_body),
+            timeout=10
         )
         if response.status_code != 200:
             logger.error(f"Ошибка API ODOS: {response.status_code} - {response.text}")
@@ -167,49 +169,57 @@ async def check_prices_and_notify():
     last_notification_time = datetime.now()
 
     while True:
-        base_price = get_base_price()
-        mode_price = get_mode_price()
+        try
+            base_price = get_base_price()
+            mode_price = get_mode_price()
 
-        if base_price is None or mode_price is None:
-            logger.warning("Не удалось получить цены из одной или обеих сетей.")
-            await asyncio.sleep(15)
-            continue
+            if base_price is None or mode_price is None:
+                logger.warning("Не удалось получить цены из одной или обеих сетей.")
+                await asyncio.sleep(15)
+                continue
 
-        bmx_diff_base_to_mode, bmx_diff_mode_to_base = calculate_arbitrage(base_price, mode_price)
+            bmx_diff_base_to_mode, bmx_diff_mode_to_base = calculate_arbitrage(base_price, mode_price)
 
-        if bmx_diff_base_to_mode is None or bmx_diff_mode_to_base is None:
-            logger.warning("Не удалось рассчитать арбитражные данные.")
-            await asyncio.sleep(15)
-            continue
+            if bmx_diff_base_to_mode is None or bmx_diff_mode_to_base is None:
+                logger.warning("Не удалось рассчитать арбитражные данные.")
+                await asyncio.sleep(15)
+                continue
 
-        # Обновляем глобальные данные
-        last_arbitrage_result["base_to_mode"] = bmx_diff_base_to_mode
-        last_arbitrage_result["mode_to_base"] = bmx_diff_mode_to_base
+            # Обновляем глобальные данные
+            last_arbitrage_result["base_to_mode"] = bmx_diff_base_to_mode
+            last_arbitrage_result["mode_to_base"] = bmx_diff_mode_to_base
 
-        logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
+            logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
-        # Алёрт по условию
-        for user_id in active_users:
-            if bmx_diff_base_to_mode > 1:
-                await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-            if bmx_diff_mode_to_base > 1:
-                await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
-
-        # Ежечасный алёрт
-        current_time = datetime.now()
-        if (current_time - last_notification_time).total_seconds() >= 3600:
+            # Алёрт по условию
             for user_id in active_users:
-                await application.bot.send_message(
-                    chat_id=user_id,
-                    text=(
-                        f"Бот в порядке. Ежечасный алёрт:\n"
-                        f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\n"
-                        f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
-                    )
-                )
-            last_notification_time = current_time
+                if bmx_diff_base_to_mode > 1:
+                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
+                if bmx_diff_mode_to_base > 1:
+                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
 
-        await asyncio.sleep(15)
+            # Ежечасный алёрт
+            current_time = datetime.now()
+            if (current_time - last_notification_time).total_seconds() >= 3600:
+                for user_id in active_users:
+                    await application.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"Бот в порядке. Ежечасный алёрт:\n"
+                            f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\n"
+                            f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
+                        )
+                    )
+                last_notification_time = current_time
+
+            await asyncio.sleep(15)
+
+        except httpcore.ConnectTimeout:
+            logger.error("Ошибка: таймаут подключения. Повтор через 15 секунд.")
+            await asyncio.sleep(15)
+        except Exception as e:
+            logger.error(f"Непредвиденная ошибка: {e}")
+            await asyncio.sleep(15)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
