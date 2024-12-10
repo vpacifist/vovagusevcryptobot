@@ -26,7 +26,8 @@ if not TELEGRAM_TOKEN:
 
 active_users = set()  # Список активных пользователей
 price_check_task = None  # Глобальная задача
-last_arbitrage_result = {"base_to_mode": None, "mode_to_base": None}  # Глобальное состояние
+hourly_alert_task = None
+last_arbitrage_result = {"base_to_mode": None, "mode_to_base": None}
 
 
 # Загрузка ABI-файлов и контрактов
@@ -189,6 +190,7 @@ async def check_prices_and_notify():
             last_arbitrage_result["base_to_mode"] = bmx_diff_base_to_mode
             last_arbitrage_result["mode_to_base"] = bmx_diff_mode_to_base
 
+
             logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
             # Алёрт по условию
@@ -201,20 +203,6 @@ async def check_prices_and_notify():
             else:
                 logger.warning("Нет активных пользователей для отправки уведомлений.")
 
-            # Ежечасный алёрт
-            current_time = datetime.now()
-            if current_time.minute == 0 and current_time.second < 15:
-                for user_id in active_users:
-                    await application.bot.send_message(
-                        chat_id=user_id,
-                        text=(
-                            f"Бот в порядке. Ежечасный алёрт:\n"
-                            f"BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX\n"
-                            f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
-                        )
-                    )
-                logger.info("Пользователи получили ежечасный алёрт")
-
             await asyncio.sleep(15)
 
         except httpcore.ConnectTimeout:
@@ -225,22 +213,75 @@ async def check_prices_and_notify():
             await asyncio.sleep(15)
 
 
+# Функция ежечасного алёрта
+async def hourly_alert():
+    global active_users, last_arbitrage_result
+
+    while True:
+        try:
+            # Проверяем, есть ли активные пользователи
+            if not active_users:
+                logger.info("Нет активных пользователей для ежечасного алерта. Ожидание следующей проверки.")
+                await asyncio.sleep(60)  # Спим до следующей минуты
+                continue
+
+            current_time = datetime.now()
+
+            # Проверяем начало нового часа
+            if current_time.minute == 0:
+                base_to_mode = last_arbitrage_result["base_to_mode"]
+                mode_to_base = last_arbitrage_result["mode_to_base"]
+
+                if base_to_mode is None or mode_to_base is None:
+                    logger.warning("Ежечасный алерт: данные недоступны.")
+                    await asyncio.sleep(60)
+                    continue
+                else:
+                    for user_id in active_users:
+                        await application.bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                f"Бот в порядке. Ежечасный алёрт:\n"
+                                f"BASE → MODE: {base_to_mode:.2f} BMX\n"
+                                f"MODE → BASE: {mode_to_base:.2f} BMX"
+                            )
+                        )
+                    logger.info("Ежечасный алёрт успешно отправлен.")
+
+                # Спим до следующей минуты, чтобы не отправить алерт несколько раз в одном часу
+                seconds_until_next_minute = 60 - current_time.second
+                await asyncio.sleep(seconds_until_next_minute)
+                continue
+
+            # Спим до следующей проверки
+            await asyncio.sleep(1)
+
+        except Exception as e:
+            logger.error(f"Ошибка в hourly_alert: {e}")
+            await asyncio.sleep(60)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global active_users, price_check_task
+    global active_users, price_check_task, hourly_alert_task
 
     user_id = update.message.chat_id
     if user_id in active_users:
         logger.info(f"Старый user_id {user_id} нажал /start и найден в списке активных")
-        await update.message.reply_text("Бот уже запущен.")
+        await update.message.reply_text("Бот уже запущен, ты уже подписан на алёрты.")
     else:
         logger.info(f"Новый user_id {user_id} нажал /start и добавлен в список активных")
         active_users.add(user_id)
         await update.message.reply_text("Привет. Я крипто-бот. Буду отправлять тебе крипто-алёрты.")
 
-    # Запускаем глобальную задачу, если она ещё не запущена
+    # Запуск check_prices_and_notify
     if price_check_task is None or price_check_task.done():
-        logger.info("Глобальная задача проверки цен запущена.")
         price_check_task = asyncio.create_task(check_prices_and_notify())
+        logger.info("check_prices_and_notify запущена.")
+
+    # Запуск hourly_alert
+    if hourly_alert_task is None or hourly_alert_task.done():
+        hourly_alert_task = asyncio.create_task(hourly_alert())
+        logger.info("hourly_alert запущен.")
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
