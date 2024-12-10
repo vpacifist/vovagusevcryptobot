@@ -3,6 +3,7 @@ import requests
 import json
 import asyncio
 import os
+import httpcore
 from web3 import Web3
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -166,10 +167,9 @@ def calculate_arbitrage(base_price, mode_price):
 # Функция оповещения об арбитраже
 async def check_prices_and_notify():
     global active_users, last_arbitrage_result
-    last_notification_time = datetime.now()
 
     while True:
-        try
+        try:
             base_price = get_base_price()
             mode_price = get_mode_price()
 
@@ -192,15 +192,18 @@ async def check_prices_and_notify():
             logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
             # Алёрт по условию
-            for user_id in active_users:
-                if bmx_diff_base_to_mode > 1:
-                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-                if bmx_diff_mode_to_base > 1:
-                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
+            if active_users:
+                for user_id in active_users:
+                    if bmx_diff_base_to_mode > 1:
+                        await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
+                    if bmx_diff_mode_to_base > 1:
+                        await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
+            else:
+                logger.warning("Нет активных пользователей для отправки уведомлений.")
 
             # Ежечасный алёрт
             current_time = datetime.now()
-            if (current_time - last_notification_time).total_seconds() >= 3600:
+            if current_time.minute == 0 and current_time.second < 15:
                 for user_id in active_users:
                     await application.bot.send_message(
                         chat_id=user_id,
@@ -210,7 +213,7 @@ async def check_prices_and_notify():
                             f"MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX"
                         )
                     )
-                last_notification_time = current_time
+                logger.info("Пользователи получили ежечасный алёрт")
 
             await asyncio.sleep(15)
 
