@@ -344,10 +344,19 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('price', price))
 
-    # Запуск задач и приложения в текущем цикле событий
-    async def start_bot():
-        await start_tasks()  # Запуск задач и уведомления
-        await application.run_polling()  # Запуск polling
+    async def on_startup():
+        # Запуск задач при старте бота
+        global price_check_task, hourly_alert_task
+        if price_check_task is None or price_check_task.done():
+            price_check_task = asyncio.create_task(check_prices_and_notify())
+        if hourly_alert_task is None or hourly_alert_task.done():
+            hourly_alert_task = asyncio.create_task(hourly_alert())
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_bot())
+        # Уведомление пользователей о перезапуске
+        await notify_users_on_restart()
+
+    # Используем startup для запуска задач и polling
+    application.post_init = on_startup
+
+    # Запуск polling
+    application.run_polling()
