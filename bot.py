@@ -344,9 +344,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('price', price))
 
-    # Запуск бота и задач в общем контексте
-    async def main():
-        await start_tasks()
-        await application.run_polling()
+    # Запуск задач и приложения в текущем цикле событий
+    async def start_bot():
+        await start_tasks()  # Запуск задач и уведомления
+        await application.run_polling()  # Запуск polling
 
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_bot())
