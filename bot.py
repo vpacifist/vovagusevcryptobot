@@ -9,6 +9,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from datetime import datetime
 from functools import wraps
+from dotenv import load_dotenv
 
 
 # Логирование
@@ -20,9 +21,10 @@ logger = logging.getLogger()
 
 
 # Токен Telegram-бота
+load_dotenv()
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    raise ValueError("Переменная окружения TELEGRAM_TOKEN не установлена.")
+    raise ValueError("TELEGRAM_TOKEN is not set. Please configure it in the environment.")
 
 
 price_check_task = None  # Глобальная задача
@@ -252,6 +254,86 @@ async def hourly_alert():
             await asyncio.sleep(60)
 
 
+def get_latest_update():
+    """Reads the latest update entry from the update history file."""
+    try:
+        with open("update_history.json", "r") as file:
+            updates = json.load(file)
+            if updates:
+                latest_update = updates[-1]
+                return {
+                    "version": latest_update["version"],
+                    "date": latest_update["date"],
+                    "changes": latest_update["changes"]
+                }
+            else:
+                return {
+                    "version": "N/A",
+                    "date": "N/A",
+                    "changes": "No updates found in the history file."
+                }
+    except Exception as e:
+        logger.error(f"Error retrieving update information: {e}")
+        return {
+            "version": "N/A",
+            "date": "N/A",
+            "changes": f"Error: {e}"
+        }
+
+
+async def notify_users_on_restart():
+    global price_check_task, hourly_alert_task
+
+    # Get task status
+    tasks_status = []
+    if price_check_task and not price_check_task.done():
+        tasks_status.append("Task: Arbitrage price checking is running.")
+    else:
+        tasks_status.append("Task: Arbitrage price checking is NOT running.")
+
+    if hourly_alert_task and not hourly_alert_task.done():
+        tasks_status.append("Task: Hourly alert is running.")
+    else:
+        tasks_status.append("Task: Hourly alert is NOT running.")
+
+    tasks_status_message = "\n".join(tasks_status)
+
+    # Combine messages
+    latest_update = get_latest_update()
+    restart_message = (
+        f"*Bot restarted with the latest update:*\n"
+        f"Version: `{latest_update['version']}`\n"
+        f"Date: `{latest_update['date']}`\n"
+        f"Changes: `{latest_update['changes']}`\n\n"
+        f"*Current task status:*\n"
+        f"Task: `Arbitrage price checking is running.`\n"
+        f"Task: `Hourly alert is running.`"
+    )
+
+
+    # Notify all allowed users
+    for user_id in allowed_users:
+        try:
+            await application.bot.send_message(chat_id=user_id, text=restart_message, parse_mode="Markdown")
+            logger.info(f"User {user_id} notified about restart.")
+        except Exception as e:
+            logger.error(f"Failed to notify user {user_id}: {e}")
+
+
+async def on_startup(app: ContextTypes.DEFAULT_TYPE):
+    """Start tasks and notify users about bot restart."""
+    global price_check_task, hourly_alert_task
+
+    # Start tasks if not already running
+    if price_check_task is None or price_check_task.done():
+        price_check_task = asyncio.create_task(check_prices_and_notify())
+    if hourly_alert_task is None or hourly_alert_task.done():
+        hourly_alert_task = asyncio.create_task(hourly_alert())
+
+    # Notify users
+    await notify_users_on_restart()
+
+
 def restricted(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -262,34 +344,6 @@ def restricted(func):
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
-
-
-async def notify_users_on_restart():
-    global price_check_task, hourly_alert_task
-
-    tasks_status = []
-    if price_check_task and not price_check_task.done():
-        tasks_status.append("Задача проверки арбитража запущена.")
-    else:
-        tasks_status.append("Задача проверки арбитража не активна.")
-
-    if hourly_alert_task and not hourly_alert_task.done():
-        tasks_status.append("Задача ежечасного алёрта запущена.")
-    else:
-        tasks_status.append("Задача ежечасного алёрта не активна.")
-
-    tasks_status_message = "\n".join(tasks_status)
-    restart_message = (
-        "Бот был успешно обновлён и перезапущен. Вот текущий статус задач:\n"
-        f"{tasks_status_message}"
-    )
-
-    for user_id in allowed_users:
-        try:
-            await application.bot.send_message(chat_id=user_id, text=restart_message)
-            logger.info(f"Пользователю {user_id} отправлено уведомление о перезапуске.")
-        except Exception as e:
-            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
 
 
 @restricted
@@ -330,18 +384,6 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"BASE → MODE: {base_to_mode:.2f} BMX\n"
             f"MODE → BASE: {mode_to_base:.2f} BMX"
         )
-
-
-async def on_startup(app: ContextTypes.DEFAULT_TYPE):
-    """Запуск задач и уведомление пользователей при старте."""
-    global price_check_task, hourly_alert_task
-    if price_check_task is None or price_check_task.done():
-        price_check_task = asyncio.create_task(check_prices_and_notify())
-    if hourly_alert_task is None or hourly_alert_task.done():
-        hourly_alert_task = asyncio.create_task(hourly_alert())
-
-    # Уведомление пользователей о перезапуске
-    await notify_users_on_restart()
 
 
 # Основной блок запуска

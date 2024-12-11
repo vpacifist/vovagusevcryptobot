@@ -1,0 +1,37 @@
+[
+    {
+        "date": "2024-12-01",
+        "version": "1.0.0",
+        "changes": "Initial release of the bot with basic functionality: commands /start, /price, and basic alerts."
+    },
+    {
+        "date": "2024-12-05",
+        "version": "1.1.0",
+        "changes": "Added hourly alert functionality and improved notification handling for arbitrage updates."
+    },
+    {
+        "date": "2024-12-08",
+        "version": "1.1.1",
+        "changes": "Bug fixes in notification logic and minor performance improvements in data fetching."
+    },
+    {
+        "date": "2024-12-09",
+        "version": "1.2.0",
+        "changes": "Introduced active user management with dynamic task handling based on user activity."
+    },
+    {
+        "date": "2024-12-10",
+        "version": "1.3.0",
+        "changes": "Replaced active user logic with allowed users, added restricted access functionality for better security."
+    },
+    {
+        "date": "2024-12-11",
+        "version": "1.4.0",
+        "changes": "Implemented update notifications for users, streamlined task initialization with post_init integration."
+    },
+    {
+        "date": "2024-12-12",
+        "version": "1.5.0",
+        "changes": "Implemented versioning notifications on bot restart."
+    }
+]
