@@ -8,6 +8,7 @@ from web3 import Web3
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from datetime import datetime
+from functools import wraps
 
 
 # Логирование
@@ -24,10 +25,10 @@ if not TELEGRAM_TOKEN:
     raise ValueError("Переменная окружения TELEGRAM_TOKEN не установлена.")
 
 
-active_users = set()  # Список активных пользователей
 price_check_task = None  # Глобальная задача
 hourly_alert_task = None
 last_arbitrage_result = {"base_to_mode": None, "mode_to_base": None}
+allowed_users = {116350148, 63853863}  # Только эти ID могут пользоваться ботом
 
 
 # Загрузка ABI-файлов и контрактов
@@ -167,7 +168,7 @@ def calculate_arbitrage(base_price, mode_price):
 
 # Функция оповещения об арбитраже
 async def check_prices_and_notify():
-    global active_users, last_arbitrage_result
+    global last_arbitrage_result
 
     while True:
         try:
@@ -194,14 +195,11 @@ async def check_prices_and_notify():
             logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
             # Алёрт по условию
-            if active_users:
-                for user_id in active_users:
-                    if bmx_diff_base_to_mode > 1:
-                        await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-                    if bmx_diff_mode_to_base > 1:
-                        await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
-            else:
-                logger.warning("Нет активных пользователей для отправки уведомлений.")
+            for user_id in allowed_users:
+                if bmx_diff_base_to_mode > 1:
+                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
+                if bmx_diff_mode_to_base > 1:
+                    await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
 
             await asyncio.sleep(15)
 
@@ -215,16 +213,10 @@ async def check_prices_and_notify():
 
 # Функция ежечасного алёрта
 async def hourly_alert():
-    global active_users, last_arbitrage_result
+    global last_arbitrage_result
 
     while True:
         try:
-            # Проверяем, есть ли активные пользователи
-            if not active_users:
-                logger.info("Нет активных пользователей для ежечасного алерта. Ожидание следующей проверки.")
-                await asyncio.sleep(60)  # Спим до следующей минуты
-                continue
-
             current_time = datetime.now()
 
             # Проверяем начало нового часа
@@ -237,7 +229,7 @@ async def hourly_alert():
                     await asyncio.sleep(60)
                     continue
                 else:
-                    for user_id in active_users:
+                    for user_id in allowed_users:
                         await application.bot.send_message(
                             chat_id=user_id,
                             text=(
@@ -261,42 +253,67 @@ async def hourly_alert():
             await asyncio.sleep(60)
 
 
+def restricted(func):
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.message.chat_id
+        if user_id not in allowed_users:
+            await update.message.reply_text("У вас нет доступа к этому боту.")
+            logger.warning(f"Пользователь {user_id} попытался использовать бота без разрешения.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+
+async def notify_users_on_restart():
+    global price_check_task, hourly_alert_task
+
+    tasks_status = []
+    if price_check_task and not price_check_task.done():
+        tasks_status.append("Задача проверки арбитража запущена.")
+    else:
+        tasks_status.append("Задача проверки арбитража не активна.")
+
+    if hourly_alert_task and not hourly_alert_task.done():
+        tasks_status.append("Задача ежечасного алёрта запущена.")
+    else:
+        tasks_status.append("Задача ежечасного алёрта не активна.")
+
+    tasks_status_message = "\n".join(tasks_status)
+    restart_message = (
+        "Бот был успешно обновлён и перезапущен. Вот текущий статус задач:\n"
+        f"{tasks_status_message}"
+    )
+
+    for user_id in allowed_users:
+        try:
+            await application.bot.send_message(chat_id=user_id, text=restart_message)
+            logger.info(f"Пользователю {user_id} отправлено уведомление о перезапуске.")
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+
+
+@restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global active_users, price_check_task, hourly_alert_task
+    global price_check_task, hourly_alert_task
 
-    user_id = update.message.chat_id
-    if user_id in active_users:
-        logger.info(f"Старый user_id {user_id} нажал /start и найден в списке активных")
-        await update.message.reply_text("Бот уже запущен, ты уже подписан на алёрты.")
+    tasks_status = []
+    if price_check_task and not price_check_task.done():
+        tasks_status.append("Задача проверки арбитража запущена.")
     else:
-        logger.info(f"Новый user_id {user_id} нажал /start и добавлен в список активных")
-        active_users.add(user_id)
-        await update.message.reply_text("Привет. Я крипто-бот. Буду отправлять тебе крипто-алёрты.")
+        tasks_status.append("Задача проверки арбитража не активна.")
 
-    # Запуск check_prices_and_notify
-    if price_check_task is None or price_check_task.done():
-        price_check_task = asyncio.create_task(check_prices_and_notify())
-        logger.info("check_prices_and_notify запущена.")
-
-    # Запуск hourly_alert
-    if hourly_alert_task is None or hourly_alert_task.done():
-        hourly_alert_task = asyncio.create_task(hourly_alert())
-        logger.info("hourly_alert запущен.")
-
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global active_users
-
-    user_id = update.message.chat_id
-    if user_id in active_users:
-        logger.info(f"Старый user_id {user_id} нажал /stop и удалён из списка активных")
-        active_users.remove(user_id)
-        await update.message.reply_text("Ты отписался от алёртов.")
+    if hourly_alert_task and not hourly_alert_task.done():
+        tasks_status.append("Задача ежечасного алёрта запущена.")
     else:
-        logger.info(f"Новый user_id {user_id} нажал /stop, он не был в списке активных")
-        await update.message.reply_text("Ты не был подписан на алёрты.")
+        tasks_status.append("Задача ежечасного алёрта не активна.")
+
+    # Отправка статуса задач
+    tasks_status_message = "\n".join(tasks_status)
+    await update.message.reply_text(f"Статус задач:\n{tasks_status_message}")
 
 
+@restricted
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global last_arbitrage_result
 
@@ -320,8 +337,13 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('stop', stop))
     application.add_handler(CommandHandler('price', price))
 
-    logger.info("Бот запущен и готов к работе.")
+    # Автоматический запуск задач
+    asyncio.create_task(check_prices_and_notify())
+    asyncio.create_task(hourly_alert())
+    logger.info("Задачи запущены автоматически для разрешённых пользователей.")
+
+    asyncio.create_task(notify_users_on_restart())
+
     application.run_polling()
