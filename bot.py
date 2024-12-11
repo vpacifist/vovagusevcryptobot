@@ -191,7 +191,6 @@ async def check_prices_and_notify():
             last_arbitrage_result["base_to_mode"] = bmx_diff_base_to_mode
             last_arbitrage_result["mode_to_base"] = bmx_diff_mode_to_base
 
-
             logger.info(f"BASE → MODE: {bmx_diff_base_to_mode:.2f}, MODE → BASE: {bmx_diff_mode_to_base:.2f}")
 
             # Алёрт по условию
