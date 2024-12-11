@@ -332,10 +332,16 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def start_tasks():
-    asyncio.create_task(check_prices_and_notify())
-    asyncio.create_task(hourly_alert())
-    await notify_users_on_restart()  # Уведомление после запуска задач
+async def on_startup(app: ContextTypes.DEFAULT_TYPE):
+    """Запуск задач и уведомление пользователей при старте."""
+    global price_check_task, hourly_alert_task
+    if price_check_task is None or price_check_task.done():
+        price_check_task = asyncio.create_task(check_prices_and_notify())
+    if hourly_alert_task is None or hourly_alert_task.done():
+        hourly_alert_task = asyncio.create_task(hourly_alert())
+
+    # Уведомление пользователей о перезапуске
+    await notify_users_on_restart()
 
 
 # Основной блок запуска
@@ -344,18 +350,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('price', price))
 
-    async def on_startup():
-        # Запуск задач при старте бота
-        global price_check_task, hourly_alert_task
-        if price_check_task is None or price_check_task.done():
-            price_check_task = asyncio.create_task(check_prices_and_notify())
-        if hourly_alert_task is None or hourly_alert_task.done():
-            hourly_alert_task = asyncio.create_task(hourly_alert())
-
-        # Уведомление пользователей о перезапуске
-        await notify_users_on_restart()
-
-    # Используем startup для запуска задач и polling
+    # Используем post_init для инициализации задач
     application.post_init = on_startup
 
     # Запуск polling
