@@ -333,17 +333,21 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def start_tasks():
+    asyncio.create_task(check_prices_and_notify())
+    asyncio.create_task(hourly_alert())
+    await notify_users_on_restart()  # Уведомление после запуска задач
+
+
 # Основной блок запуска
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('price', price))
 
-    # Автоматический запуск задач
-    asyncio.create_task(check_prices_and_notify())
-    asyncio.create_task(hourly_alert())
-    logger.info("Задачи запущены автоматически для разрешённых пользователей.")
+    # Запуск бота и задач в общем контексте
+    async def main():
+        await start_tasks()
+        await application.run_polling()
 
-    asyncio.create_task(notify_users_on_restart())
-
-    application.run_polling()
+    asyncio.run(main())
