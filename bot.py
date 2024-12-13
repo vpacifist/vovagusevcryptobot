@@ -197,9 +197,9 @@ async def check_prices_and_notify():
 
             # Алёрт по условию
             for user_id in allowed_users:
-                if bmx_diff_base_to_mode > 1:
+                if bmx_diff_base_to_mode > 0.5:
                     await application.bot.send_message(chat_id=user_id, text=f"Алёрт! BASE → MODE: {bmx_diff_base_to_mode:.2f} BMX.")
-                if bmx_diff_mode_to_base > 1:
+                if bmx_diff_mode_to_base > 0.5:
                     await application.bot.send_message(chat_id=user_id, text=f"Алёрт! MODE → BASE: {bmx_diff_mode_to_base:.2f} BMX.")
 
             await asyncio.sleep(15)
